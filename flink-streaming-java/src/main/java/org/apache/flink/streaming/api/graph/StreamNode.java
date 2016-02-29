@@ -37,16 +37,14 @@ import org.apache.flink.streaming.api.operators.StreamOperator;
 public class StreamNode implements Serializable {
 
 	private static final long serialVersionUID = 1L;
-	private static int currentSlotSharingIndex = 1;
 
 	transient private StreamExecutionEnvironment env;
 
-	private Integer id;
+	private final int id;
 	private Integer parallelism = null;
 	private Long bufferTimeout = null;
-	private String operatorName;
-	private Integer slotSharingID;
-	private boolean isolatedSlot = false;
+	private final String operatorName;
+	private String slotSharingGroup;
 	private KeySelector<?,?> statePartitioner1;
 	private KeySelector<?,?> statePartitioner2;
 	private TypeSerializer<?> stateKeySerializer;
@@ -60,22 +58,26 @@ public class StreamNode implements Serializable {
 	private List<StreamEdge> inEdges = new ArrayList<StreamEdge>();
 	private List<StreamEdge> outEdges = new ArrayList<StreamEdge>();
 
-	private Class<? extends AbstractInvokable> jobVertexClass;
+	private final Class<? extends AbstractInvokable> jobVertexClass;
 
 	private InputFormat<?, ?> inputFormat;
 
 	private String transformationId;
 
-	public StreamNode(StreamExecutionEnvironment env, Integer id, StreamOperator<?> operator,
-			String operatorName, List<OutputSelector<?>> outputSelector,
-			Class<? extends AbstractInvokable> jobVertexClass) {
+	public StreamNode(StreamExecutionEnvironment env,
+		Integer id,
+		String slotSharingGroup,
+		StreamOperator<?> operator,
+		String operatorName,
+		List<OutputSelector<?>> outputSelector,
+		Class<? extends AbstractInvokable> jobVertexClass) {
 		this.env = env;
 		this.id = id;
 		this.operatorName = operatorName;
 		this.operator = operator;
 		this.outputSelectors = outputSelector;
 		this.jobVertexClass = jobVertexClass;
-		this.slotSharingID = currentSlotSharingIndex;
+		this.slotSharingGroup = slotSharingGroup;
 	}
 
 	public void addInEdge(StreamEdge inEdge) {
@@ -122,7 +124,7 @@ public class StreamNode implements Serializable {
 		return inEdgeIndices;
 	}
 
-	public Integer getId() {
+	public int getId() {
 		return id;
 	}
 
@@ -156,10 +158,6 @@ public class StreamNode implements Serializable {
 
 	public String getOperatorName() {
 		return operatorName;
-	}
-
-	public void setOperatorName(String operatorName) {
-		this.operatorName = operatorName;
 	}
 
 	public List<OutputSelector<?>> getOutputSelectors() {
@@ -206,18 +204,19 @@ public class StreamNode implements Serializable {
 		this.inputFormat = inputFormat;
 	}
 
-	public int getSlotSharingID() {
-		return isolatedSlot ? -1 : slotSharingID;
+	public void setSlotSharingGroup(String slotSharingGroup) {
+		this.slotSharingGroup = slotSharingGroup;
 	}
 
-	public void startNewSlotSharingGroup() {
-		this.slotSharingID = ++currentSlotSharingIndex;
+	public String getSlotSharingGroup() {
+		return slotSharingGroup;
 	}
 
-	public void isolateSlot() {
-		isolatedSlot = true;
+	public boolean isSameSlotSharingGroup(StreamNode downstreamVertex) {
+		return (slotSharingGroup == null && downstreamVertex.slotSharingGroup == null) ||
+				(slotSharingGroup != null && slotSharingGroup.equals(downstreamVertex.slotSharingGroup));
 	}
-	
+
 	@Override
 	public String toString() {
 		return operatorName + "-" + id;
@@ -265,12 +264,11 @@ public class StreamNode implements Serializable {
 		}
 
 		StreamNode that = (StreamNode) o;
-
-		return id.equals(that.id);
+		return id == that.id;
 	}
 
 	@Override
 	public int hashCode() {
-		return id.hashCode();
+		return id;
 	}
 }

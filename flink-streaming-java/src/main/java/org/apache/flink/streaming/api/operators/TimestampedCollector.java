@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -7,7 +7,7 @@
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *   http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -29,7 +29,7 @@ import org.apache.flink.util.Collector;
  * would set the timestamp of the incoming
  * {@link org.apache.flink.streaming.runtime.streamrecord.StreamRecord} here.
  *
- * @param <T> The type of the elments that can be emitted.
+ * @param <T> The type of the elements that can be emitted.
  */
 @Internal
 public class TimestampedCollector<T> implements Collector<T> {
@@ -37,9 +37,6 @@ public class TimestampedCollector<T> implements Collector<T> {
 	private final Output<StreamRecord<T>> output;
 
 	private final StreamRecord<T> reuse;
-	
-	private long timestamp;
-	
 
 	/**
 	 * Creates a new {@link TimestampedCollector} that wraps the given {@link Output}.
@@ -51,17 +48,19 @@ public class TimestampedCollector<T> implements Collector<T> {
 
 	@Override
 	public void collect(T record) {
-		output.collect(reuse.replace(record, timestamp));
+		output.collect(reuse.replace(record));
+	}
+	
+	public void setTimestamp(StreamRecord<?> timestampBase) {
+		if (timestampBase.hasTimestamp()) {
+			reuse.setTimestamp(timestampBase.getTimestamp());
+		} else {
+			reuse.eraseTimestamp();
+		}
 	}
 
-	/**
-	 * Sets the timestamp (long milliseconds) that is attached to elements that get emitted using
-	 * {@link #collect(Object)}
-	 * 
-	 * @param timestamp The timestamp in milliseconds
-	 */
-	public void setTimestamp(long timestamp) {
-		this.timestamp = timestamp;
+	public void setAbsoluteTimestamp(long timestamp) {
+		reuse.setTimestamp(timestamp);
 	}
 
 	@Override

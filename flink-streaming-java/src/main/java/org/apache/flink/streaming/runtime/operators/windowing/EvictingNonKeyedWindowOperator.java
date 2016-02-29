@@ -36,11 +36,12 @@ import static java.util.Objects.requireNonNull;
  * @see org.apache.flink.streaming.runtime.operators.windowing.EvictingWindowOperator
  *
  * @param <IN> The type of the incoming elements.
+ * @param <ACC> The type of elements stored in the window buffers.
  * @param <OUT> The type of elements emitted by the {@code WindowFunction}.
  * @param <W> The type of {@code Window} that the {@code WindowAssigner} assigns.
  */
 @Internal
-public class EvictingNonKeyedWindowOperator<IN, OUT, W extends Window> extends NonKeyedWindowOperator<IN, OUT, W> {
+public class EvictingNonKeyedWindowOperator<IN, ACC, OUT, W extends Window> extends NonKeyedWindowOperator<IN, ACC, OUT, W> {
 
 	private static final long serialVersionUID = 1L;
 
@@ -48,8 +49,8 @@ public class EvictingNonKeyedWindowOperator<IN, OUT, W extends Window> extends N
 
 	public EvictingNonKeyedWindowOperator(WindowAssigner<? super IN, W> windowAssigner,
 			TypeSerializer<W> windowSerializer,
-			WindowBufferFactory<? super IN, ? extends EvictingWindowBuffer<IN>> windowBufferFactory,
-			AllWindowFunction<Iterable<IN>, OUT, W> windowFunction,
+			WindowBufferFactory<? super IN, ACC, ? extends EvictingWindowBuffer<IN, ACC>> windowBufferFactory,
+			AllWindowFunction<ACC, OUT, W> windowFunction,
 			Trigger<? super IN, ? super W> trigger,
 			Evictor<? super IN, ? super W> evictor) {
 		super(windowAssigner, windowSerializer, windowBufferFactory, windowFunction, trigger);
@@ -59,8 +60,8 @@ public class EvictingNonKeyedWindowOperator<IN, OUT, W extends Window> extends N
 	@Override
 	@SuppressWarnings("unchecked, rawtypes")
 	protected void emitWindow(Context context) throws Exception {
-		timestampedCollector.setTimestamp(context.window.maxTimestamp());
-		EvictingWindowBuffer<IN> windowBuffer = (EvictingWindowBuffer<IN>) context.windowBuffer;
+		timestampedCollector.setAbsoluteTimestamp(context.window.maxTimestamp());
+		EvictingWindowBuffer<IN, ACC> windowBuffer = (EvictingWindowBuffer<IN, ACC>) context.windowBuffer;
 
 		int toEvict = 0;
 		if (windowBuffer.size() > 0) {
@@ -75,13 +76,6 @@ public class EvictingNonKeyedWindowOperator<IN, OUT, W extends Window> extends N
 				context.windowBuffer.getUnpackedElements(),
 				timestampedCollector);
 	}
-
-	@Override
-	public EvictingNonKeyedWindowOperator<IN, OUT, W> enableSetProcessingTime(boolean setProcessingTime) {
-		super.enableSetProcessingTime(setProcessingTime);
-		return this;
-	}
-
 
 	// ------------------------------------------------------------------------
 	// Getters for testing

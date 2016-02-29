@@ -2,7 +2,7 @@
 title: "Streaming Libraries"
 sub-nav-group: streaming
 sub-nav-id: libs
-sub-nav-pos: 4
+sub-nav-pos: 7
 sub-nav-title: Libraries
 ---
 <!--

@@ -25,14 +25,14 @@ import org.apache.flink.api.common.functions.ReduceFunction
 import org.apache.flink.api.common.state.ReducingStateDescriptor
 import org.apache.flink.api.java.tuple.Tuple
 import org.apache.flink.streaming.api.TimeCharacteristic
-import org.apache.flink.streaming.api.functions.windowing.{WindowFunction, AllWindowFunction}
+import org.apache.flink.streaming.api.scala.function.{WindowFunction, AllWindowFunction}
 import org.apache.flink.streaming.api.transformations.OneInputTransformation
-import org.apache.flink.streaming.api.windowing.assigners.{TumblingTimeWindows, SlidingTimeWindows}
+import org.apache.flink.streaming.api.windowing.assigners.{SlidingProcessingTimeWindows, TumblingTimeWindows, SlidingTimeWindows}
 import org.apache.flink.streaming.api.windowing.evictors.{CountEvictor, TimeEvictor}
 import org.apache.flink.streaming.api.windowing.time.Time
 import org.apache.flink.streaming.api.windowing.triggers.{ProcessingTimeTrigger, CountTrigger}
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow
-import org.apache.flink.streaming.runtime.operators.windowing.buffers.{HeapWindowBuffer, PreAggregatingHeapWindowBuffer}
+import org.apache.flink.streaming.runtime.operators.windowing.buffers.{ListWindowBuffer, ReducingWindowBuffer}
 import org.apache.flink.streaming.runtime.operators.windowing._
 import org.apache.flink.streaming.util.StreamingMultipleProgramsTestBase
 import org.apache.flink.util.Collector
@@ -76,7 +76,7 @@ class AllWindowTranslationTest extends StreamingMultipleProgramsTestBase {
       .windowAll(SlidingTimeWindows.of(
         Time.of(1, TimeUnit.SECONDS),
         Time.of(100, TimeUnit.MILLISECONDS)))
-      .apply(new AllWindowFunction[Iterable[(String, Int)], (String, Int), TimeWindow]() {
+      .apply(new AllWindowFunction[(String, Int), (String, Int), TimeWindow]() {
         def apply(
             window: TimeWindow,
             values: Iterable[(String, Int)],
@@ -111,18 +111,18 @@ class AllWindowTranslationTest extends StreamingMultipleProgramsTestBase {
 
     val operator1 = transform1.getOperator
 
-    assertTrue(operator1.isInstanceOf[NonKeyedWindowOperator[_, _, _]])
-    val winOperator1 = operator1.asInstanceOf[NonKeyedWindowOperator[_, _, _]]
+    assertTrue(operator1.isInstanceOf[NonKeyedWindowOperator[_, _, _, _]])
+    val winOperator1 = operator1.asInstanceOf[NonKeyedWindowOperator[_, _, _, _]]
     assertTrue(winOperator1.getTrigger.isInstanceOf[CountTrigger[_]])
     assertTrue(winOperator1.getWindowAssigner.isInstanceOf[SlidingTimeWindows])
     assertTrue(
-      winOperator1.getWindowBufferFactory.isInstanceOf[PreAggregatingHeapWindowBuffer.Factory[_]])
+      winOperator1.getWindowBufferFactory.isInstanceOf[ReducingWindowBuffer.Factory[_]])
 
 
     val window2 = source
       .windowAll(TumblingTimeWindows.of(Time.of(1, TimeUnit.SECONDS)))
       .trigger(CountTrigger.of(100))
-      .apply(new AllWindowFunction[Iterable[(String, Int)], (String, Int), TimeWindow]() {
+      .apply(new AllWindowFunction[(String, Int), (String, Int), TimeWindow]() {
       def apply(
                     window: TimeWindow,
                     values: Iterable[(String, Int)],
@@ -134,11 +134,11 @@ class AllWindowTranslationTest extends StreamingMultipleProgramsTestBase {
 
     val operator2 = transform2.getOperator
 
-    assertTrue(operator2.isInstanceOf[NonKeyedWindowOperator[_, _, _]])
-    val winOperator2 = operator2.asInstanceOf[NonKeyedWindowOperator[_, _, _]]
+    assertTrue(operator2.isInstanceOf[NonKeyedWindowOperator[_, _, _, _]])
+    val winOperator2 = operator2.asInstanceOf[NonKeyedWindowOperator[_, _, _, _]]
     assertTrue(winOperator2.getTrigger.isInstanceOf[CountTrigger[_]])
     assertTrue(winOperator2.getWindowAssigner.isInstanceOf[TumblingTimeWindows])
-    assertTrue(winOperator2.getWindowBufferFactory.isInstanceOf[HeapWindowBuffer.Factory[_]])
+    assertTrue(winOperator2.getWindowBufferFactory.isInstanceOf[ListWindowBuffer.Factory[_]])
   }
 
   @Test
@@ -150,7 +150,7 @@ class AllWindowTranslationTest extends StreamingMultipleProgramsTestBase {
     val reducer = new DummyReducer
 
     val window1 = source
-      .windowAll(SlidingTimeWindows.of(
+      .windowAll(SlidingProcessingTimeWindows.of(
         Time.of(1, TimeUnit.SECONDS),
         Time.of(100, TimeUnit.MILLISECONDS)))
       .evictor(TimeEvictor.of(Time.of(1, TimeUnit.SECONDS)))
@@ -161,19 +161,19 @@ class AllWindowTranslationTest extends StreamingMultipleProgramsTestBase {
 
     val operator1 = transform1.getOperator
 
-    assertTrue(operator1.isInstanceOf[EvictingNonKeyedWindowOperator[_, _, _]])
-    val winOperator1 = operator1.asInstanceOf[EvictingNonKeyedWindowOperator[_, _, _]]
+    assertTrue(operator1.isInstanceOf[EvictingNonKeyedWindowOperator[_, _, _, _]])
+    val winOperator1 = operator1.asInstanceOf[EvictingNonKeyedWindowOperator[_, _, _, _]]
     assertTrue(winOperator1.getTrigger.isInstanceOf[ProcessingTimeTrigger])
     assertTrue(winOperator1.getEvictor.isInstanceOf[TimeEvictor[_]])
-    assertTrue(winOperator1.getWindowAssigner.isInstanceOf[SlidingTimeWindows])
-    assertTrue(winOperator1.getWindowBufferFactory.isInstanceOf[HeapWindowBuffer.Factory[_]])
+    assertTrue(winOperator1.getWindowAssigner.isInstanceOf[SlidingProcessingTimeWindows])
+    assertTrue(winOperator1.getWindowBufferFactory.isInstanceOf[ListWindowBuffer.Factory[_]])
 
 
     val window2 = source
       .windowAll(TumblingTimeWindows.of(Time.of(1, TimeUnit.SECONDS)))
       .trigger(CountTrigger.of(100))
       .evictor(CountEvictor.of(1000))
-      .apply(new AllWindowFunction[Iterable[(String, Int)], (String, Int), TimeWindow]() {
+      .apply(new AllWindowFunction[(String, Int), (String, Int), TimeWindow]() {
       def apply(
                     window: TimeWindow,
                     values: Iterable[(String, Int)],
@@ -185,12 +185,12 @@ class AllWindowTranslationTest extends StreamingMultipleProgramsTestBase {
 
     val operator2 = transform2.getOperator
 
-    assertTrue(operator2.isInstanceOf[EvictingNonKeyedWindowOperator[_, _, _]])
-    val winOperator2 = operator2.asInstanceOf[EvictingNonKeyedWindowOperator[_, _, _]]
+    assertTrue(operator2.isInstanceOf[EvictingNonKeyedWindowOperator[_, _, _, _]])
+    val winOperator2 = operator2.asInstanceOf[EvictingNonKeyedWindowOperator[_, _, _, _]]
     assertTrue(winOperator2.getTrigger.isInstanceOf[CountTrigger[_]])
     assertTrue(winOperator2.getEvictor.isInstanceOf[CountEvictor[_]])
     assertTrue(winOperator2.getWindowAssigner.isInstanceOf[TumblingTimeWindows])
-    assertTrue(winOperator2.getWindowBufferFactory.isInstanceOf[HeapWindowBuffer.Factory[_]])
+    assertTrue(winOperator2.getWindowBufferFactory.isInstanceOf[ListWindowBuffer.Factory[_]])
   }
 
   @Test
@@ -211,7 +211,7 @@ class AllWindowTranslationTest extends StreamingMultipleProgramsTestBase {
         def apply(
                    tuple: Tuple,
                    window: TimeWindow,
-                   values: (String, Int),
+                   values: Iterable[(String, Int)],
                    out: Collector[(String, Int)]) { }
       })
 
@@ -236,7 +236,7 @@ class AllWindowTranslationTest extends StreamingMultipleProgramsTestBase {
         def apply(
                    tuple: Tuple,
                    window: TimeWindow,
-                   values: (String, Int),
+                   values: Iterable[(String, Int)],
                    out: Collector[(String, Int)]) { }
       })
 

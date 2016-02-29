@@ -53,7 +53,10 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Random;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import static java.util.Objects.requireNonNull;
+import static org.apache.flink.streaming.connectors.kafka.util.KafkaUtils.getIntFromConfig;
+import static org.apache.flink.streaming.connectors.kafka.util.KafkaUtils.getLongFromConfig;
+
 
 /**
  * The Flink Kafka Consumer is a streaming data source that pulls a parallel data stream from
@@ -119,8 +122,8 @@ public class FlinkKafkaConsumer08<T> extends FlinkKafkaConsumerBase<T> {
 	
 	// ------  Configuration of the Consumer -------
 
-	/** List of partitions (including topics and leaders) to consume  */
-	private final List<KafkaTopicPartitionLeader> partitionInfos;
+	/** Initial list of topics and partitions to consume  */
+	private final List<KafkaTopicPartition> partitionInfos;
 	
 	/** The properties to parametrize the Kafka consumer and ZooKeeper client */ 
 	private final Properties props;
@@ -135,7 +138,7 @@ public class FlinkKafkaConsumer08<T> extends FlinkKafkaConsumerBase<T> {
 	private transient OffsetHandler offsetHandler;
 	
 	/** The partitions actually handled by this consumer at runtime */
-	private transient List<KafkaTopicPartitionLeader> subscribedPartitions;
+	private transient List<KafkaTopicPartition> subscribedPartitions;
 
 	/** The latest offsets that have been committed to Kafka or ZooKeeper. These are never
 	 * newer then the last offsets (Flink's internal view is fresher) */
@@ -205,14 +208,14 @@ public class FlinkKafkaConsumer08<T> extends FlinkKafkaConsumerBase<T> {
 	public FlinkKafkaConsumer08(List<String> topics, KeyedDeserializationSchema<T> deserializer, Properties props) {
 		super(deserializer, props);
 
-		checkNotNull(topics, "topics");
-		this.props = checkNotNull(props, "props");
+		requireNonNull(topics, "topics");
+		this.props = requireNonNull(props, "props");
 
 		// validate the zookeeper properties
 		validateZooKeeperConfig(props);
 
 		// Connect to a broker to get the partitions for all topics
-		this.partitionInfos = getPartitionsForTopic(topics, props);
+		this.partitionInfos = KafkaTopicPartition.dropLeaderData(getPartitionsForTopic(topics, props));
 
 		if (partitionInfos.size() == 0) {
 			throw new RuntimeException("Unable to retrieve any partitions for the requested topics " + topics.toString() + "." +
@@ -220,7 +223,7 @@ public class FlinkKafkaConsumer08<T> extends FlinkKafkaConsumerBase<T> {
 		}
 
 		if (LOG.isInfoEnabled()) {
-			logPartitionInfo(KafkaTopicPartition.convertToPartitionInfo(partitionInfos));
+			logPartitionInfo(partitionInfos);
 		}
 	}
 
@@ -240,7 +243,7 @@ public class FlinkKafkaConsumer08<T> extends FlinkKafkaConsumerBase<T> {
 		
 		if (LOG.isInfoEnabled()) {
 			LOG.info("Kafka consumer {} will read partitions {} out of partitions {}",
-					thisConsumerIndex, KafkaTopicPartitionLeader.toString(subscribedPartitions), this.partitionInfos.size());
+					thisConsumerIndex, KafkaTopicPartition.toString(subscribedPartitions), this.partitionInfos.size());
 		}
 
 		// we leave the fetcher as null, if we have no partitions
@@ -250,14 +253,17 @@ public class FlinkKafkaConsumer08<T> extends FlinkKafkaConsumerBase<T> {
 			return;
 		}
 		
-		// create fetcher
-		fetcher = new LegacyFetcher(this.subscribedPartitions, props, 
-				getRuntimeContext().getTaskName(), getRuntimeContext().getUserCodeClassLoader());
 
 		// offset handling
 		offsetHandler = new ZookeeperOffsetHandler(props);
 
 		committedOffsets = new HashMap<>();
+
+		Map<KafkaTopicPartition, Long> subscribedPartitionsWithOffsets = new HashMap<>(subscribedPartitions.size());
+		// initially load the map with "offset not set"
+		for(KafkaTopicPartition ktp: subscribedPartitions) {
+			subscribedPartitionsWithOffsets.put(ktp, FlinkKafkaConsumer08.OFFSET_NOT_SET);
+		}
 
 		// seek to last known pos, from restore request
 		if (restoreToOffset != null) {
@@ -265,24 +271,26 @@ public class FlinkKafkaConsumer08<T> extends FlinkKafkaConsumerBase<T> {
 				LOG.info("Consumer {} is restored from previous checkpoint: {}",
 						thisConsumerIndex, KafkaTopicPartition.toString(restoreToOffset));
 			}
-			
-			for (Map.Entry<KafkaTopicPartition, Long> restorePartition: restoreToOffset.entrySet()) {
-				// seek fetcher to restore position
-				// we set the offset +1 here, because seek() is accepting the next offset to read,
-				// but the restore offset is the last read offset
-				fetcher.seek(restorePartition.getKey(), restorePartition.getValue() + 1);
-			}
 			// initialize offsets with restored state
 			this.offsetsState = restoreToOffset;
+			subscribedPartitionsWithOffsets.putAll(restoreToOffset);
 			restoreToOffset = null;
 		}
 		else {
 			// start with empty offsets
 			offsetsState = new HashMap<>();
 
-			// no restore request. Let the offset handler take care of the initial offset seeking
-			offsetHandler.seekFetcherToInitialOffsets(subscribedPartitions, fetcher);
+			// no restore request: overwrite offsets.
+			subscribedPartitionsWithOffsets.putAll(offsetHandler.getOffsets(subscribedPartitions));
 		}
+		if(subscribedPartitionsWithOffsets.size() != subscribedPartitions.size()) {
+			throw new IllegalStateException("The subscribed partitions map has more entries than the subscribed partitions " +
+					"list: " + subscribedPartitionsWithOffsets.size() + "," + subscribedPartitions.size());
+		}
+
+		// create fetcher
+		fetcher = new LegacyFetcher(subscribedPartitionsWithOffsets, props,
+				getRuntimeContext().getTaskName(), getRuntimeContext().getUserCodeClassLoader());
 	}
 
 	@Override
@@ -297,7 +305,7 @@ public class FlinkKafkaConsumer08<T> extends FlinkKafkaConsumerBase<T> {
 				// we use Kafka's own configuration parameter key for this.
 				// Note that the default configuration value in Kafka is 60 * 1000, so we use the
 				// same here.
-				long commitInterval = Long.valueOf(props.getProperty("auto.commit.interval.ms", "60000"));
+				long commitInterval = getLongFromConfig(props, "auto.commit.interval.ms", 60000);
 				offsetCommitter = new PeriodicOffsetCommitter<>(commitInterval, this);
 				offsetCommitter.setDaemon(true);
 				offsetCommitter.start();
@@ -320,9 +328,7 @@ public class FlinkKafkaConsumer08<T> extends FlinkKafkaConsumerBase<T> {
 		else {
 			// this source never completes, so emit a Long.MAX_VALUE watermark
 			// to not block watermark forwarding
-			if (getRuntimeContext().getExecutionConfig().areTimestampsEnabled()) {
-				sourceContext.emitWatermark(new Watermark(Long.MAX_VALUE));
-			}
+			sourceContext.emitWatermark(new Watermark(Long.MAX_VALUE));
 
 			final Object waitLock = new Object();
 			while (running) {
@@ -389,26 +395,27 @@ public class FlinkKafkaConsumer08<T> extends FlinkKafkaConsumerBase<T> {
 	 * @param toCommit the offsets to commit
 	 * @throws Exception
 	 */
+	@Override
 	protected void commitOffsets(HashMap<KafkaTopicPartition, Long> toCommit) throws Exception {
 		Map<KafkaTopicPartition, Long> offsetsToCommit = new HashMap<>();
-		for (KafkaTopicPartitionLeader tp : this.subscribedPartitions) {
-			Long offset = toCommit.get(tp.getTopicPartition());
+		for (KafkaTopicPartition tp : this.subscribedPartitions) {
+			Long offset = toCommit.get(tp);
 			if(offset == null) {
 				// There was no data ever consumed from this topic, that's why there is no entry
 				// for this topicPartition in the map.
 				continue;
 			}
-			Long lastCommitted = this.committedOffsets.get(tp.getTopicPartition());
+			Long lastCommitted = this.committedOffsets.get(tp);
 			if (lastCommitted == null) {
 				lastCommitted = OFFSET_NOT_SET;
 			}
 			if (offset != OFFSET_NOT_SET) {
 				if (offset > lastCommitted) {
-					offsetsToCommit.put(tp.getTopicPartition(), offset);
-					this.committedOffsets.put(tp.getTopicPartition(), offset);
-					LOG.debug("Committing offset {} for partition {}", offset, tp.getTopicPartition());
+					offsetsToCommit.put(tp, offset);
+					this.committedOffsets.put(tp, offset);
+					LOG.debug("Committing offset {} for partition {}", offset, tp);
 				} else {
-					LOG.debug("Ignoring offset {} for partition {} because it is already committed", offset, tp.getTopicPartition());
+					LOG.debug("Ignoring offset {} for partition {} because it is already committed", offset, tp);
 				}
 			}
 		}
@@ -483,11 +490,15 @@ public class FlinkKafkaConsumer08<T> extends FlinkKafkaConsumerBase<T> {
 	 */
 	public static List<KafkaTopicPartitionLeader> getPartitionsForTopic(final List<String> topics, final Properties properties) {
 		String seedBrokersConfString = properties.getProperty(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG);
-		final int numRetries = Integer.valueOf(properties.getProperty(GET_PARTITIONS_RETRIES_KEY, Integer.toString(DEFAULT_GET_PARTITIONS_RETRIES)));
+		final int numRetries = getIntFromConfig(properties, GET_PARTITIONS_RETRIES_KEY, DEFAULT_GET_PARTITIONS_RETRIES);
 
-		checkNotNull(seedBrokersConfString, "Configuration property " + ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG + " not set");
+		requireNonNull(seedBrokersConfString, "Configuration property " + ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG + " not set");
 		String[] seedBrokers = seedBrokersConfString.split(",");
 		List<KafkaTopicPartitionLeader> partitions = new ArrayList<>();
+
+		final String clientId = "flink-kafka-consumer-partition-lookup";
+		final int soTimeout = getIntFromConfig(properties, "socket.timeout.ms", 30000);
+		final int bufferSize = getIntFromConfig(properties, "socket.receive.buffer.bytes", 65536);
 
 		Random rnd = new Random();
 		retryLoop: for (int retry = 0; retry < numRetries; retry++) {
@@ -504,9 +515,6 @@ public class FlinkKafkaConsumer08<T> extends FlinkKafkaConsumerBase<T> {
 				URL brokerUrl = NetUtils.getCorrectHostnamePort(seedBroker);
 				SimpleConsumer consumer = null;
 				try {
-					final String clientId = "flink-kafka-consumer-partition-lookup";
-					final int soTimeout = Integer.valueOf(properties.getProperty("socket.timeout.ms", "30000"));
-					final int bufferSize = Integer.valueOf(properties.getProperty("socket.receive.buffer.bytes", "65536"));
 					consumer = new SimpleConsumer(brokerUrl.getHost(), brokerUrl.getPort(), soTimeout, bufferSize, clientId);
 
 					TopicMetadataRequest req = new TopicMetadataRequest(topics);
@@ -518,10 +526,6 @@ public class FlinkKafkaConsumer08<T> extends FlinkKafkaConsumerBase<T> {
 					partitions.clear();
 					for (TopicMetadata item : metaData) {
 						if (item.errorCode() != ErrorMapping.NoError()) {
-							if (item.errorCode() == ErrorMapping.InvalidTopicCode() || item.errorCode() == ErrorMapping.UnknownTopicOrPartitionCode()) {
-								// fail hard if topic is unknown
-								throw new RuntimeException("Requested partitions for unknown topic", ErrorMapping.exceptionFor(item.errorCode()));
-							}
 							// warn and try more brokers
 							LOG.warn("Error while getting metadata from broker " + seedBroker + " to find partitions " +
 									"for " + topics.toString() + ". Error: " + ErrorMapping.exceptionFor(item.errorCode()).getMessage());
@@ -540,8 +544,15 @@ public class FlinkKafkaConsumer08<T> extends FlinkKafkaConsumerBase<T> {
 					}
 					break retryLoop; // leave the loop through the brokers
 				} catch (Exception e) {
-					LOG.warn("Error communicating with broker " + seedBroker + " to find partitions for " + topics.toString() + ". Message: " + e.getMessage());
+					LOG.warn("Error communicating with broker " + seedBroker + " to find partitions for " + topics.toString() + "." +
+							"" + e.getClass() + ". Message: " + e.getMessage());
 					LOG.debug("Detailed trace", e);
+					// we sleep a bit. Retrying immediately doesn't make sense in cases where Kafka is reorganizing the leader metadata
+					try {
+						Thread.sleep(500);
+					} catch (InterruptedException e1) {
+						// sleep shorter.
+					}
 				} finally {
 					if (consumer != null) {
 						consumer.close();

@@ -30,7 +30,7 @@ under the License.
 
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-		<flink.version>1.0-SNAPSHOT</flink.version>
+		<flink.version>1.1-SNAPSHOT</flink.version>
 	</properties>
 
 	<repositories>
@@ -88,6 +88,60 @@ under the License.
 			<version>${flink.version}</version>
 		</dependency>
 	</dependencies>
+
+	<profiles>
+		<profile>
+			<!-- Profile for packaging correct JAR files -->
+			<id>build-jar</id>
+			<activation>
+				<activeByDefault>false</activeByDefault>
+			</activation>
+			<dependencies>
+				<dependency>
+					<groupId>org.apache.flink</groupId>
+					<artifactId>flink-java</artifactId>
+					<version>${flink.version}</version>
+					<scope>provided</scope>
+				</dependency>
+				<dependency>
+					<groupId>org.apache.flink</groupId>
+					<artifactId>flink-streaming-java_2.10</artifactId>
+					<version>${flink.version}</version>
+					<scope>provided</scope>
+				</dependency>
+				<dependency>
+					<groupId>org.apache.flink</groupId>
+					<artifactId>flink-clients_2.10</artifactId>
+					<version>${flink.version}</version>
+					<scope>provided</scope>
+				</dependency>
+			</dependencies>
+
+			<build>
+				<plugins>
+					<!-- disable the exclusion rules -->
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-shade-plugin</artifactId>
+						<version>2.4.1</version>
+						<executions>
+							<execution>
+								<phase>package</phase>
+								<goals>
+									<goal>shade</goal>
+								</goals>
+								<configuration>
+									<artifactSet>
+										<excludes combine.self="override"></excludes>
+									</artifactSet>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
 
 	<build>
 		<plugins>
@@ -213,20 +267,6 @@ under the License.
 					</execution>
 				</executions>
 			</plugin>
-			
-			<!-- Configure the jar plugin to add the main class as a manifest entry -->
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-jar-plugin</artifactId>
-				<version>2.5</version>
-				<configuration>
-					<archive>
-						<manifestEntries>
-							<Main-Class>${package}.Job</Main-Class>
-						</manifestEntries>
-					</archive>
-				</configuration>
-			</plugin>
 
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
@@ -303,34 +343,4 @@ under the License.
 		-->
 		
 	</build>
-	<profiles>
-		<profile>
-			<!-- A profile that does everyting correctly:
-			We set the Flink dependencies to provided -->
-			<id>build-jar</id>
-			<activation>
-				<activeByDefault>false</activeByDefault>
-			</activation>
-			<dependencies>
-				<dependency>
-					<groupId>org.apache.flink</groupId>
-					<artifactId>flink-java</artifactId>
-					<version>${flink.version}</version>
-					<scope>provided</scope>
-				</dependency>
-				<dependency>
-					<groupId>org.apache.flink</groupId>
-					<artifactId>flink-streaming-java_2.10</artifactId>
-					<version>${flink.version}</version>
-					<scope>provided</scope>
-				</dependency>
-				<dependency>
-					<groupId>org.apache.flink</groupId>
-					<artifactId>flink-clients_2.10</artifactId>
-					<version>${flink.version}</version>
-					<scope>provided</scope>
-				</dependency>
-			</dependencies>
-		</profile>
-	</profiles>
 </project>

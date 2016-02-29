@@ -632,7 +632,7 @@ class JobManager(
           log.debug(s"$savepoint")
 
           // Discard the associated checkpoint
-          savepoint.getCompletedCheckpoint.discard(getClass.getClassLoader)
+          savepoint.discard(getClass.getClassLoader)
 
           // Dispose the savepoint
           savepointStore.disposeState(savepointPath)
@@ -949,6 +949,8 @@ class JobManager(
             case Some(strategy) => strategy
             case None => defaultRestartStrategy
           }
+
+        log.info(s"Using restart strategy $restartStrategy for $jobId.")
 
         // see if there already exists an ExecutionGraph for the corresponding job ID
         executionGraph = currentJobs.get(jobGraph.getJobID) match {

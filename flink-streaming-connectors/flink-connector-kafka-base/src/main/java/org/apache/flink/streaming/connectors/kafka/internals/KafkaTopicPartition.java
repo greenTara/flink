@@ -19,11 +19,11 @@ package org.apache.flink.streaming.connectors.kafka.internals;
 
 import java.io.Serializable;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import static java.util.Objects.requireNonNull;
+
 
 /**
  * A serializable representation of a kafka topic and a partition.
@@ -38,7 +38,7 @@ public class KafkaTopicPartition implements Serializable {
 	private final int cachedHash;
 
 	public KafkaTopicPartition(String topic, int partition) {
-		this.topic = checkNotNull(topic);
+		this.topic = requireNonNull(topic);
 		this.partition = partition;
 		this.cachedHash = 31 * topic.hashCode() + partition;
 	}
@@ -84,20 +84,6 @@ public class KafkaTopicPartition implements Serializable {
 
 	// ------------------- Utilities -------------------------------------
 
-	/**
-	 * Returns a unique list of topics from the topic partition map
-	 *
-	 * @param topicPartitionMap A map of KafkaTopicPartition's
-	 * @return A unique list of topics from the input map
-	 */
-	public static List<String> getTopics(Map<KafkaTopicPartition, ?> topicPartitionMap) {
-		HashSet<String> uniqueTopics = new HashSet<>();
-		for (KafkaTopicPartition ktp: topicPartitionMap.keySet()) {
-			uniqueTopics.add(ktp.getTopic());
-		}
-		return new ArrayList<>(uniqueTopics);
-	}
-
 	public static String toString(Map<KafkaTopicPartition, Long> map) {
 		StringBuilder sb = new StringBuilder();
 		for (Map.Entry<KafkaTopicPartition, Long> p: map.entrySet()) {
@@ -107,22 +93,16 @@ public class KafkaTopicPartition implements Serializable {
 		return sb.toString();
 	}
 
-	/**
-	 * Checks whether this partition is contained in the map with KafkaTopicPartitionLeaders
-	 *
-	 * @param map The map of KafkaTopicPartitionLeaders
-	 * @return true if the element is contained.
-	 */
-	public boolean isContained(Map<KafkaTopicPartitionLeader, ?> map) {
-		for(Map.Entry<KafkaTopicPartitionLeader, ?> entry : map.entrySet()) {
-			if(entry.getKey().getTopicPartition().equals(this)) {
-				return true;
-			}
+	public static String toString(List<KafkaTopicPartition> partitions) {
+		StringBuilder sb = new StringBuilder();
+		for (KafkaTopicPartition p: partitions) {
+			sb.append(p.getTopic()).append(":").append(p.getPartition()).append(", ");
 		}
-		return false;
+		return sb.toString();
 	}
 
-	public static List<KafkaTopicPartition> convertToPartitionInfo(List<KafkaTopicPartitionLeader> partitionInfos) {
+
+	public static List<KafkaTopicPartition> dropLeaderData(List<KafkaTopicPartitionLeader> partitionInfos) {
 		List<KafkaTopicPartition> ret = new ArrayList<>(partitionInfos.size());
 		for(KafkaTopicPartitionLeader ktpl: partitionInfos) {
 			ret.add(ktpl.getTopicPartition());

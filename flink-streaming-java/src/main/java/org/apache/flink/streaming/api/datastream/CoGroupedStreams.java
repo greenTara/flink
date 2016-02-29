@@ -321,8 +321,8 @@ public class CoGroupedStreams<T1, T2> {
 	private static class UnionTypeInfo<T1, T2> extends TypeInformation<TaggedUnion<T1, T2>> {
 		private static final long serialVersionUID = 1L;
 
-		TypeInformation<T1> oneType;
-		TypeInformation<T2> twoType;
+		private final TypeInformation<T1> oneType;
+		private final TypeInformation<T2> twoType;
 
 		public UnionTypeInfo(TypeInformation<T1> oneType,
 				TypeInformation<T2> twoType) {
@@ -556,7 +556,7 @@ public class CoGroupedStreams<T1, T2> {
 
 	private static class CoGroupWindowFunction<T1, T2, T, KEY, W extends Window>
 			extends WrappingFunction<CoGroupFunction<T1, T2, T>>
-			implements WindowFunction<Iterable<TaggedUnion<T1, T2>>, T, KEY, W> {
+			implements WindowFunction<TaggedUnion<T1, T2>, T, KEY, W> {
 		
 		private static final long serialVersionUID = 1L;
 

@@ -48,7 +48,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import static java.util.Objects.requireNonNull;
 
 /**
  * The Flink Kafka Consumer is a streaming data source that pulls a parallel data stream from
@@ -178,8 +178,8 @@ public class FlinkKafkaConsumer09<T> extends FlinkKafkaConsumerBase<T> {
 	 */
 	public FlinkKafkaConsumer09(List<String> topics, KeyedDeserializationSchema<T> deserializer, Properties props) {
 		super(deserializer, props);
-		checkNotNull(topics, "topics");
-		this.properties = checkNotNull(props, "props");
+		requireNonNull(topics, "topics");
+		this.properties = requireNonNull(props, "props");
 		setDeserializer(this.properties);
 		KafkaConsumer<byte[], byte[]> consumer = null;
 		try {
@@ -238,7 +238,7 @@ public class FlinkKafkaConsumer09<T> extends FlinkKafkaConsumerBase<T> {
 	 * @return A list of KafkaTopicPartitions
 	 */
 	public static List<KafkaTopicPartition> convertToFlinkKafkaTopicPartition(List<PartitionInfo> partitions) {
-		checkNotNull(partitions, "The given list of partitions was null");
+		requireNonNull(partitions, "The given list of partitions was null");
 		List<KafkaTopicPartition> ret = new ArrayList<>(partitions.size());
 		for(PartitionInfo pi: partitions) {
 			ret.add(new KafkaTopicPartition(pi.topic(), pi.partition()));
@@ -318,11 +318,12 @@ public class FlinkKafkaConsumer09<T> extends FlinkKafkaConsumerBase<T> {
 	public void run(SourceContext<T> sourceContext) throws Exception {
 		if(consumer != null) {
 			consumerThread = new ConsumerThread<>(this, sourceContext);
+			consumerThread.setDaemon(true);
 			consumerThread.start();
 			// wait for the consumer to stop
 			while(consumerThread.isAlive()) {
 				if(consumerThreadException != null) {
-					throw new RuntimeException("ConsumerThread threw an exception", consumerThreadException);
+					throw new RuntimeException("ConsumerThread threw an exception: " + consumerThreadException.getMessage(), consumerThreadException);
 				}
 				try {
 					consumerThread.join(50);
@@ -332,14 +333,12 @@ public class FlinkKafkaConsumer09<T> extends FlinkKafkaConsumerBase<T> {
 			}
 			// check again for an exception
 			if(consumerThreadException != null) {
-				throw new RuntimeException("ConsumerThread threw an exception", consumerThreadException);
+				throw new RuntimeException("ConsumerThread threw an exception: " + consumerThreadException.getMessage(), consumerThreadException);
 			}
 		} else {
 			// this source never completes, so emit a Long.MAX_VALUE watermark
 			// to not block watermark forwarding
-			if (getRuntimeContext().getExecutionConfig().areTimestampsEnabled()) {
-				sourceContext.emitWatermark(new Watermark(Long.MAX_VALUE));
-			}
+			sourceContext.emitWatermark(new Watermark(Long.MAX_VALUE));
 
 			final Object waitLock = new Object();
 			this.waitThread = Thread.currentThread();

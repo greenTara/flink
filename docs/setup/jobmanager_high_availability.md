@@ -23,11 +23,11 @@ specific language governing permissions and limitations
 under the License.
 -->
 
-The JobManager is coordinates every Flink deployment. It is responsible for both *scheduling* and *resource management*.
+The JobManager coordinates every Flink deployment. It is responsible for both *scheduling* and *resource management*.
 
 By default, there is a single JobManager instance per Flink cluster. This creates a *single point of failure* (SPOF): if the JobManager crashes, no new programs can be submitted and running programs fail.
 
-With JobManager High Availability, you can run recover from JobManager failures and thereby eliminate the *SPOF*. You can configure high availability for both **standalone** and **YARN clusters**.
+With JobManager High Availability, you can recover from JobManager failures and thereby eliminate the *SPOF*. You can configure high availability for both **standalone** and **YARN clusters**.
 
 * Toc
 {:toc}
@@ -85,7 +85,7 @@ In order to start an HA-cluster add the following configuration keys to `conf/fl
     <pre>
 state.backend: filesystem
 state.backend.fs.checkpointdir: hdfs:///flink/checkpoints
-recovery.zookeeper.storageDir: hdfs:///flink/recovery/</pre>
+recovery.zookeeper.storageDir: hdfs:///flink/recovery</pre>
 
     The `storageDir` stores all meta data needed to recover a JobManager failure.
 
@@ -101,7 +101,7 @@ recovery.zookeeper.quorum: localhost:2181
 recovery.zookeeper.path.root: /flink # important: customize per cluster
 state.backend: filesystem
 state.backend.fs.checkpointdir: hdfs:///flink/checkpoints
-recovery.zookeeper.storageDir: hdfs:///flink/recovery/</pre>
+recovery.zookeeper.storageDir: hdfs:///flink/recovery</pre>
 
 2. **Configure masters** in `conf/masters`:
 
@@ -184,7 +184,7 @@ recovery.zookeeper.quorum: localhost:2181
 recovery.zookeeper.path.root: /flink # important: customize per cluster
 state.backend: filesystem
 state.backend.fs.checkpointdir: hdfs:///flink/checkpoints
-recovery.zookeeper.storageDir: hdfs:///flink/recovery/
+recovery.zookeeper.storageDir: hdfs:///flink/recovery
 yarn.application-attempts: 10</pre>
 
 3. **Configure ZooKeeper server** in `conf/zoo.cfg` (currently it's only possible to run a single ZooKeeper server per machine):

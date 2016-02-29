@@ -45,8 +45,11 @@ import org.apache.flink.api.java.typeutils.InputTypeConfigurable;
 import org.apache.flink.api.java.typeutils.TypeExtractor;
 import org.apache.flink.core.fs.FileSystem.WriteMode;
 import org.apache.flink.core.fs.Path;
+import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.collector.selector.OutputSelector;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.AssignerWithPeriodicWatermarks;
+import org.apache.flink.streaming.api.functions.AssignerWithPunctuatedWatermarks;
 import org.apache.flink.streaming.api.functions.TimestampExtractor;
 import org.apache.flink.streaming.api.functions.sink.OutputFormatSinkFunction;
 import org.apache.flink.streaming.api.functions.sink.PrintSinkFunction;
@@ -62,7 +65,9 @@ import org.apache.flink.streaming.api.transformations.PartitionTransformation;
 import org.apache.flink.streaming.api.transformations.StreamTransformation;
 import org.apache.flink.streaming.api.transformations.UnionTransformation;
 import org.apache.flink.streaming.api.windowing.assigners.GlobalWindows;
+import org.apache.flink.streaming.api.windowing.assigners.SlidingProcessingTimeWindows;
 import org.apache.flink.streaming.api.windowing.assigners.SlidingTimeWindows;
+import org.apache.flink.streaming.api.windowing.assigners.TumblingProcessingTimeWindows;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingTimeWindows;
 import org.apache.flink.streaming.api.windowing.assigners.WindowAssigner;
 import org.apache.flink.streaming.api.windowing.evictors.CountEvictor;
@@ -73,12 +78,13 @@ import org.apache.flink.streaming.api.windowing.windows.GlobalWindow;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.streaming.api.windowing.windows.Window;
 import org.apache.flink.streaming.runtime.operators.ExtractTimestampsOperator;
+import org.apache.flink.streaming.runtime.operators.TimestampsAndPeriodicWatermarksOperator;
+import org.apache.flink.streaming.runtime.operators.TimestampsAndPunctuatedWatermarksOperator;
 import org.apache.flink.streaming.runtime.partitioner.BroadcastPartitioner;
 import org.apache.flink.streaming.runtime.partitioner.CustomPartitionerWrapper;
 import org.apache.flink.streaming.runtime.partitioner.ForwardPartitioner;
 import org.apache.flink.streaming.runtime.partitioner.RescalePartitioner;
 import org.apache.flink.streaming.runtime.partitioner.RebalancePartitioner;
-import org.apache.flink.streaming.runtime.partitioner.HashPartitioner;
 import org.apache.flink.streaming.runtime.partitioner.GlobalPartitioner;
 import org.apache.flink.streaming.runtime.partitioner.ShufflePartitioner;
 import org.apache.flink.streaming.runtime.partitioner.StreamPartitioner;
@@ -122,7 +128,7 @@ public class DataStream<T> {
 	 * @return ID of the DataStream
 	 */
 	@Internal
-	public Integer getId() {
+	public int getId() {
 		return transformation.getId();
 	}
 
@@ -272,61 +278,6 @@ public class DataStream<T> {
 	}
 
 	/**
-	 * Sets the partitioning of the {@link DataStream} so that the output is
-	 * partitioned hashing on the given fields. This setting only
-	 * effects the how the outputs will be distributed between the parallel
-	 * instances of the next processing operator.
-	 *
-	 * @param fields The tuple fields that should be used for partitioning
-	 * @return The partitioned DataStream
-	 *
-	 */
-	public DataStream<T> partitionByHash(int... fields) {
-		if (getType() instanceof BasicArrayTypeInfo || getType() instanceof PrimitiveArrayTypeInfo) {
-			return partitionByHash(KeySelectorUtil.getSelectorForArray(fields, getType()));
-		} else {
-			return partitionByHash(new Keys.ExpressionKeys<>(fields, getType()));
-		}
-	}
-
-	/**
-	 * Sets the partitioning of the {@link DataStream} so that the output is
-	 * partitioned hashing on the given fields. This setting only
-	 * effects the how the outputs will be distributed between the parallel
-	 * instances of the next processing operator.
-	 *
-	 * @param fields The tuple fields that should be used for partitioning
-	 * @return The partitioned DataStream
-	 *
-	 */
-	public DataStream<T> partitionByHash(String... fields) {
-		return partitionByHash(new Keys.ExpressionKeys<>(fields, getType()));
-	}
-
-	/**
-	 * Sets the partitioning of the {@link DataStream} so that the output is
-	 * partitioned using the given {@link KeySelector}. This setting only
-	 * effects the how the outputs will be distributed between the parallel
-	 * instances of the next processing operator.
-	 *
-	 * @param keySelector The function that extracts the key from an element in the Stream
-	 * @return The partitioned DataStream
-	 */
-	public DataStream<T> partitionByHash(KeySelector<T, ?> keySelector) {
-		return setConnectionType(new HashPartitioner<>(clean(keySelector)));
-	}
-
-	//private helper method for partitioning
-	private DataStream<T> partitionByHash(Keys<T> keys) {
-		KeySelector<T, ?> keySelector = clean(KeySelectorUtil.getSelectorForKeys(
-				keys,
-				getType(),
-				getExecutionConfig()));
-
-		return setConnectionType(new HashPartitioner<>(keySelector));
-	}
-
-	/**
 	 * Partitions a tuple DataStream on the specified key fields using a custom partitioner.
 	 * This method takes the key position to partition on, and a partitioner that accepts the key type.
 	 * <p>
@@ -348,7 +299,7 @@ public class DataStream<T> {
 	 * Note: This method works only on single field keys.
 	 *
 	 * @param partitioner The partitioner to assign partitions to keys.
-	 * @param field The field index on which the DataStream is to partitioned.
+	 * @param field The expression for the field on which the DataStream is to partitioned.
 	 * @return The partitioned DataStream.
 	 */
 	public <K> DataStream<T> partitionCustom(Partitioner<K> partitioner, String field) {
@@ -657,7 +608,11 @@ public class DataStream<T> {
 	 * @param size The size of the window.
 	 */
 	public AllWindowedStream<T, TimeWindow> timeWindowAll(Time size) {
-		return windowAll(TumblingTimeWindows.of(size));
+		if (environment.getStreamTimeCharacteristic() == TimeCharacteristic.ProcessingTime) {
+			return windowAll(TumblingProcessingTimeWindows.of(size));
+		} else {
+			return windowAll(TumblingTimeWindows.of(size));
+		}
 	}
 
 	/**
@@ -677,7 +632,11 @@ public class DataStream<T> {
 	 * @param size The size of the window.
 	 */
 	public AllWindowedStream<T, TimeWindow> timeWindowAll(Time size, Time slide) {
-		return windowAll(SlidingTimeWindows.of(size, slide));
+		if (environment.getStreamTimeCharacteristic() == TimeCharacteristic.ProcessingTime) {
+			return windowAll(SlidingProcessingTimeWindows.of(size, slide));
+		} else {
+			return windowAll(SlidingTimeWindows.of(size, slide));
+		}
 	}
 
 	/**
@@ -735,6 +694,10 @@ public class DataStream<T> {
 		return new AllWindowedStream<>(this, assigner);
 	}
 
+	// ------------------------------------------------------------------------
+	//  Timestamps and watermarks
+	// ------------------------------------------------------------------------
+	
 	/**
 	 * Extracts a timestamp from an element and assigns it as the internal timestamp of that element.
 	 * The internal timestamps are, for example, used to to event-time window operations.
@@ -745,11 +708,15 @@ public class DataStream<T> {
 	 * you should provide a {@link TimestampExtractor} that also implements
 	 * {@link TimestampExtractor#getCurrentWatermark()} to keep track of watermarks.
 	 *
-	 * @see org.apache.flink.streaming.api.watermark.Watermark
-	 *
 	 * @param extractor The TimestampExtractor that is called for each element of the DataStream.
+	 * 
+	 * @deprecated Please use {@link #assignTimestampsAndWatermarks(AssignerWithPeriodicWatermarks)}
+	 *             of {@link #assignTimestampsAndWatermarks(AssignerWithPunctuatedWatermarks)}
+	 *             instread.
+	 * @see #assignTimestampsAndWatermarks(AssignerWithPeriodicWatermarks)
+	 * @see #assignTimestampsAndWatermarks(AssignerWithPunctuatedWatermarks)
 	 */
-	@PublicEvolving
+	@Deprecated
 	public SingleOutputStreamOperator<T, ?> assignTimestamps(TimestampExtractor<T> extractor) {
 		// match parallelism to input, otherwise dop=1 sources could lead to some strange
 		// behaviour: the watermark will creep along very slowly because the elements
@@ -760,6 +727,95 @@ public class DataStream<T> {
 				.setParallelism(inputParallelism);
 	}
 
+	/**
+	 * Assigns timestamps to the elements in the data stream and periodically creates
+	 * watermarks to signal event time progress.
+	 * 
+	 * <p>This method creates watermarks periodically (for example every second), based
+	 * on the watermarks indicated by the given watermark generator. Even when no new elements
+	 * in the stream arrive, the given watermark generator will be periodically checked for
+	 * new watermarks. The interval in which watermarks are generated is defined in
+	 * {@link ExecutionConfig#setAutoWatermarkInterval(long)}.
+	 * 
+	 * <p>Use this method for the common cases, where some characteristic over all elements
+	 * should generate the watermarks, or where watermarks are simply trailing behind the
+	 * wall clock time by a certain amount.
+	 * 
+	 * <p>For cases where watermarks should be created in an irregular fashion, for example
+	 * based on certain markers that some element carry, use the
+	 * {@link AssignerWithPunctuatedWatermarks}.
+	 * 
+	 * @param timestampAndWatermarkAssigner The implementation of the timestamp assigner and
+	 *                                      watermark generator.   
+	 * @return The stream after the transformation, with assigned timestamps and watermarks.
+	 * 
+	 * @see AssignerWithPeriodicWatermarks
+	 * @see AssignerWithPunctuatedWatermarks
+	 * @see #assignTimestampsAndWatermarks(AssignerWithPunctuatedWatermarks) 
+	 */
+	public SingleOutputStreamOperator<T, ?> assignTimestampsAndWatermarks(
+			AssignerWithPeriodicWatermarks<T> timestampAndWatermarkAssigner) {
+		
+		// match parallelism to input, otherwise dop=1 sources could lead to some strange
+		// behaviour: the watermark will creep along very slowly because the elements
+		// from the source go to each extraction operator round robin.
+		final int inputParallelism = getTransformation().getParallelism();
+		final AssignerWithPeriodicWatermarks<T> cleanedAssigner = clean(timestampAndWatermarkAssigner);
+		
+		TimestampsAndPeriodicWatermarksOperator<T> operator = 
+				new TimestampsAndPeriodicWatermarksOperator<>(cleanedAssigner);
+		
+		return transform("Timestamps/Watermarks", getTransformation().getOutputType(), operator)
+				.setParallelism(inputParallelism);
+	}
+
+	/**
+	 * Assigns timestamps to the elements in the data stream and periodically creates
+	 * watermarks to signal event time progress.
+	 *
+	 * <p>This method creates watermarks based purely on stream elements. For each element
+	 * that is handled via {@link AssignerWithPunctuatedWatermarks#extractTimestamp(Object, long)},
+	 * the {@link AssignerWithPunctuatedWatermarks#checkAndGetNextWatermark(Object, long)}
+	 * method is called, and a new watermark is emitted, if the returned watermark value is
+	 * non-negative and greater than the previous watermark.
+	 *
+	 * <p>This method is useful when the data stream embeds watermark elements, or certain elements
+	 * carry a marker that can be used to determine the current event time watermark. 
+	 * This operation gives the programmer full control over the watermark generation. Users
+	 * should be aware that too aggressive watermark generation (i.e., generating hundreds of
+	 * watermarks every second) can cost some performance.
+	 *
+	 * <p>For cases where watermarks should be created in a regular fashion, for example
+	 * every x milliseconds, use the {@link AssignerWithPeriodicWatermarks}.
+	 *
+	 * @param timestampAndWatermarkAssigner The implementation of the timestamp assigner and
+	 *                                      watermark generator.   
+	 * @return The stream after the transformation, with assigned timestamps and watermarks.
+	 *
+	 * @see AssignerWithPunctuatedWatermarks
+	 * @see AssignerWithPeriodicWatermarks
+	 * @see #assignTimestampsAndWatermarks(AssignerWithPeriodicWatermarks)
+	 */
+	public SingleOutputStreamOperator<T, ?> assignTimestampsAndWatermarks(
+			AssignerWithPunctuatedWatermarks<T> timestampAndWatermarkAssigner) {
+		
+		// match parallelism to input, otherwise dop=1 sources could lead to some strange
+		// behaviour: the watermark will creep along very slowly because the elements
+		// from the source go to each extraction operator round robin.
+		final int inputParallelism = getTransformation().getParallelism();
+		final AssignerWithPunctuatedWatermarks<T> cleanedAssigner = clean(timestampAndWatermarkAssigner);
+
+		TimestampsAndPunctuatedWatermarksOperator<T> operator = 
+				new TimestampsAndPunctuatedWatermarksOperator<>(cleanedAssigner);
+		
+		return transform("Timestamps/Watermarks", getTransformation().getOutputType(), operator)
+				.setParallelism(inputParallelism);
+	}
+
+	// ------------------------------------------------------------------------
+	//  Data sinks
+	// ------------------------------------------------------------------------
+	
 	/**
 	 * Writes a DataStream to the standard output stream (stdout).
 	 *

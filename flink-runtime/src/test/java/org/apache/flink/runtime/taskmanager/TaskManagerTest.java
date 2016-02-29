@@ -23,7 +23,6 @@ import akka.actor.ActorSystem;
 import akka.actor.Props;
 import akka.japi.Creator;
 import akka.testkit.JavaTestKit;
-import org.apache.flink.api.common.ApplicationID;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.configuration.ConfigConstants;
 import org.apache.flink.configuration.Configuration;
@@ -57,10 +56,11 @@ import org.apache.flink.runtime.messages.StackTraceSampleMessages.TriggerStackTr
 import org.apache.flink.runtime.messages.TaskManagerMessages;
 import org.apache.flink.runtime.messages.TaskMessages;
 import org.apache.flink.runtime.messages.TaskMessages.CancelTask;
-import org.apache.flink.runtime.messages.TaskMessages.StopTask;
 import org.apache.flink.runtime.messages.TaskMessages.PartitionState;
+import org.apache.flink.runtime.messages.TaskMessages.StopTask;
 import org.apache.flink.runtime.messages.TaskMessages.SubmitTask;
 import org.apache.flink.runtime.messages.TaskMessages.TaskOperationResult;
+import org.apache.flink.runtime.testingUtils.TestingJobManagerMessages;
 import org.apache.flink.runtime.testingUtils.TestingTaskManagerMessages;
 import org.apache.flink.runtime.testingUtils.TestingUtils;
 import org.apache.flink.runtime.testutils.StoppableInvokable;
@@ -99,16 +99,14 @@ import static org.junit.Assert.fail;
 public class TaskManagerTest extends TestLogger {
 
 	private static final Logger LOG = LoggerFactory.getLogger(TaskManagerTest.class);
-	
+
 	private static final FiniteDuration timeout = new FiniteDuration(1, TimeUnit.MINUTES);
 
-	private static final FiniteDuration d = new FiniteDuration(20, TimeUnit.SECONDS);
+	private static final FiniteDuration d = new FiniteDuration(60, TimeUnit.SECONDS);
 
 	private static ActorSystem system;
 
 	final static UUID leaderSessionID = null;
-
-	final static ApplicationID appId = new ApplicationID();
 
 	@BeforeClass
 	public static void setup() {
@@ -119,7 +117,7 @@ public class TaskManagerTest extends TestLogger {
 	public static void teardown() {
 		JavaTestKit.shutdownActorSystem(system);
 	}
-	
+
 	@Test
 	public void testSubmitAndExecuteTask() {
 		new JavaTestKit(system){{
@@ -129,7 +127,7 @@ public class TaskManagerTest extends TestLogger {
 					system,
 					getTestActor(),
 					Option.<String>empty());
-			
+
 			try {
 				taskManager = TestingUtils.createTaskManager(
 						system,
@@ -139,13 +137,13 @@ public class TaskManagerTest extends TestLogger {
 						false);
 
 				final ActorGateway tm = taskManager;
-				
+
 				// handle the registration
 				new Within(d) {
 					@Override
 					protected void run() {
 						expectMsgClass(RegistrationMessages.RegisterTaskManager.class);
-						
+
 						final InstanceID iid = new InstanceID();
 						assertEquals(tm.actor(), getLastSender());
 						tm.tell(
@@ -160,19 +158,19 @@ public class TaskManagerTest extends TestLogger {
 				final JobVertexID vid = new JobVertexID();
 				final ExecutionAttemptID eid = new ExecutionAttemptID();
 
-				final TaskDeploymentDescriptor tdd = new TaskDeploymentDescriptor(appId, jid, vid, eid, "TestTask", 2, 7, 0,
+				final TaskDeploymentDescriptor tdd = new TaskDeploymentDescriptor(jid, vid, eid, "TestTask", 2, 7, 0,
 						new Configuration(), new Configuration(), TestInvokableCorrect.class.getName(),
 						Collections.<ResultPartitionDeploymentDescriptor>emptyList(),
 						Collections.<InputGateDeploymentDescriptor>emptyList(),
 						new ArrayList<BlobKey>(), Collections.<URL>emptyList(), 0);
 
-				
+
 				new Within(d) {
 
 					@Override
 					protected void run() {
 						tm.tell(new SubmitTask(tdd), jobManager);
-						
+
 						// TaskManager should acknowledge the submission
 						// heartbeats may be interleaved
 						long deadline = System.currentTimeMillis() + 10000;
@@ -190,7 +188,7 @@ public class TaskManagerTest extends TestLogger {
 						// task should have switched to finished
 						Object toFinished = new TaskMessages.UpdateTaskExecutionState(
 										new TaskExecutionState(jid, eid, ExecutionState.FINISHED));
-						
+
 						deadline = System.currentTimeMillis() + 10000;
 						do {
 							Object message = receiveOne(d);
@@ -212,8 +210,8 @@ public class TaskManagerTest extends TestLogger {
 								fail("Unexpected message: " + message);
 							}
 						} while (System.currentTimeMillis() < deadline);
-						
-						
+
+
 					}
 				};
 			}
@@ -228,7 +226,7 @@ public class TaskManagerTest extends TestLogger {
 			}
 		}};
 	}
-	
+
 	@Test
 	public void testJobSubmissionAndCanceling() {
 		new JavaTestKit(system){{
@@ -260,13 +258,13 @@ public class TaskManagerTest extends TestLogger {
 				final ExecutionAttemptID eid1 = new ExecutionAttemptID();
 				final ExecutionAttemptID eid2 = new ExecutionAttemptID();
 
-				final TaskDeploymentDescriptor tdd1 = new TaskDeploymentDescriptor(appId, jid1, vid1, eid1, "TestTask1", 1, 5, 0,
+				final TaskDeploymentDescriptor tdd1 = new TaskDeploymentDescriptor(jid1, vid1, eid1, "TestTask1", 1, 5, 0,
 						new Configuration(), new Configuration(), TestInvokableBlockingCancelable.class.getName(),
 						Collections.<ResultPartitionDeploymentDescriptor>emptyList(),
 						Collections.<InputGateDeploymentDescriptor>emptyList(),
 						new ArrayList<BlobKey>(), Collections.<URL>emptyList(), 0);
 
-				final TaskDeploymentDescriptor tdd2 = new TaskDeploymentDescriptor(appId, jid2, vid2, eid2, "TestTask2", 2, 7, 0,
+				final TaskDeploymentDescriptor tdd2 = new TaskDeploymentDescriptor(jid2, vid2, eid2, "TestTask2", 2, 7, 0,
 						new Configuration(), new Configuration(), TestInvokableBlockingCancelable.class.getName(),
 						Collections.<ResultPartitionDeploymentDescriptor>emptyList(),
 						Collections.<InputGateDeploymentDescriptor>emptyList(),
@@ -294,7 +292,7 @@ public class TaskManagerTest extends TestLogger {
 
 							Await.ready(t1Running, d);
 							Await.ready(t2Running, d);
-							
+
 							tm.tell(TestingTaskManagerMessages.getRequestRunningTasksMessage(), testActorGateway);
 
 							Map<ExecutionAttemptID, Task> runningTasks = expectMsgClass(TestingTaskManagerMessages
@@ -392,13 +390,13 @@ public class TaskManagerTest extends TestLogger {
 				final ExecutionAttemptID eid1 = new ExecutionAttemptID();
 				final ExecutionAttemptID eid2 = new ExecutionAttemptID();
 
-				final TaskDeploymentDescriptor tdd1 = new TaskDeploymentDescriptor(appId, jid1, vid1, eid1, "TestTask1", 1, 5, 0,
+				final TaskDeploymentDescriptor tdd1 = new TaskDeploymentDescriptor(jid1, vid1, eid1, "TestTask1", 1, 5, 0,
 						new Configuration(), new Configuration(), StoppableInvokable.class.getName(),
 						Collections.<ResultPartitionDeploymentDescriptor>emptyList(),
 						Collections.<InputGateDeploymentDescriptor>emptyList(),
 						new ArrayList<BlobKey>(), Collections.<URL>emptyList(), 0);
 
-				final TaskDeploymentDescriptor tdd2 = new TaskDeploymentDescriptor(appId, jid2, vid2, eid2, "TestTask2", 2, 7, 0,
+				final TaskDeploymentDescriptor tdd2 = new TaskDeploymentDescriptor(jid2, vid2, eid2, "TestTask2", 2, 7, 0,
 						new Configuration(), new Configuration(), TestInvokableBlockingCancelable.class.getName(),
 						Collections.<ResultPartitionDeploymentDescriptor>emptyList(),
 						Collections.<InputGateDeploymentDescriptor>emptyList(),
@@ -518,13 +516,13 @@ public class TaskManagerTest extends TestLogger {
 				final ExecutionAttemptID eid1 = new ExecutionAttemptID();
 				final ExecutionAttemptID eid2 = new ExecutionAttemptID();
 
-				final TaskDeploymentDescriptor tdd1 = new TaskDeploymentDescriptor(appId, jid, vid1, eid1, "Sender", 0, 1, 0,
+				final TaskDeploymentDescriptor tdd1 = new TaskDeploymentDescriptor(jid, vid1, eid1, "Sender", 0, 1, 0,
 						new Configuration(), new Configuration(), Tasks.Sender.class.getName(),
 						Collections.<ResultPartitionDeploymentDescriptor>emptyList(),
 						Collections.<InputGateDeploymentDescriptor>emptyList(),
 						new ArrayList<BlobKey>(), Collections.<URL>emptyList(), 0);
 
-				final TaskDeploymentDescriptor tdd2 = new TaskDeploymentDescriptor(appId, jid, vid2, eid2, "Receiver", 2, 7, 0,
+				final TaskDeploymentDescriptor tdd2 = new TaskDeploymentDescriptor(jid, vid2, eid2, "Receiver", 2, 7, 0,
 						new Configuration(), new Configuration(), Tasks.Receiver.class.getName(),
 						Collections.<ResultPartitionDeploymentDescriptor>emptyList(),
 						Collections.<InputGateDeploymentDescriptor>emptyList(),
@@ -572,7 +570,7 @@ public class TaskManagerTest extends TestLogger {
 			}
 		}};
 	}
-	
+
 	@Test
 	public void testRunJobWithForwardChannel() {
 		new JavaTestKit(system){{
@@ -617,12 +615,12 @@ public class TaskManagerTest extends TestLogger {
 								}
 						);
 
-				final TaskDeploymentDescriptor tdd1 = new TaskDeploymentDescriptor(appId, jid, vid1, eid1, "Sender", 0, 1, 0,
+				final TaskDeploymentDescriptor tdd1 = new TaskDeploymentDescriptor(jid, vid1, eid1, "Sender", 0, 1, 0,
 						new Configuration(), new Configuration(), Tasks.Sender.class.getName(),
 						irpdd, Collections.<InputGateDeploymentDescriptor>emptyList(), new ArrayList<BlobKey>(),
 						Collections.<URL>emptyList(), 0);
 
-				final TaskDeploymentDescriptor tdd2 = new TaskDeploymentDescriptor(appId, jid, vid2, eid2, "Receiver", 2, 7, 0,
+				final TaskDeploymentDescriptor tdd2 = new TaskDeploymentDescriptor(jid, vid2, eid2, "Receiver", 2, 7, 0,
 						new Configuration(), new Configuration(), Tasks.Receiver.class.getName(),
 						Collections.<ResultPartitionDeploymentDescriptor>emptyList(),
 						Collections.singletonList(ircdd),
@@ -651,7 +649,7 @@ public class TaskManagerTest extends TestLogger {
 							// only now (after the sender is running), submit the receiver task
 							tm.tell(new SubmitTask(tdd2), testActorGateway);
 							expectMsgEquals(Messages.getAcknowledge());
-							
+
 							// wait until the receiver task is running
 							Await.ready(t2Running, d);
 
@@ -701,7 +699,7 @@ public class TaskManagerTest extends TestLogger {
 			}
 		}};
 	}
-	
+
 	@Test
 	public void testCancellingDependentAndStateUpdateFails() {
 		// this tests creates two tasks. the sender sends data, and fails to send the
@@ -756,12 +754,12 @@ public class TaskManagerTest extends TestLogger {
 								}
 						);
 
-				final TaskDeploymentDescriptor tdd1 = new TaskDeploymentDescriptor(appId, jid, vid1, eid1, "Sender", 0, 1, 0,
+				final TaskDeploymentDescriptor tdd1 = new TaskDeploymentDescriptor(jid, vid1, eid1, "Sender", 0, 1, 0,
 						new Configuration(), new Configuration(), Tasks.Sender.class.getName(),
 						irpdd, Collections.<InputGateDeploymentDescriptor>emptyList(),
 						new ArrayList<BlobKey>(), Collections.<URL>emptyList(), 0);
 
-				final TaskDeploymentDescriptor tdd2 = new TaskDeploymentDescriptor(appId, jid, vid2, eid2, "Receiver", 2, 7, 0,
+				final TaskDeploymentDescriptor tdd2 = new TaskDeploymentDescriptor(jid, vid2, eid2, "Receiver", 2, 7, 0,
 						new Configuration(), new Configuration(), Tasks.BlockingReceiver.class.getName(),
 						Collections.<ResultPartitionDeploymentDescriptor>emptyList(),
 						Collections.singletonList(ircdd),
@@ -899,7 +897,7 @@ public class TaskManagerTest extends TestLogger {
 						new InputGateDeploymentDescriptor(resultId, 0, icdd);
 
 				final TaskDeploymentDescriptor tdd = new TaskDeploymentDescriptor(
-						appId, jid, vid, eid, "Receiver", 0, 1, 0,
+						jid, vid, eid, "Receiver", 0, 1, 0,
 						new Configuration(), new Configuration(),
 						Tasks.AgnosticReceiver.class.getName(),
 						Collections.<ResultPartitionDeploymentDescriptor>emptyList(),
@@ -992,7 +990,7 @@ public class TaskManagerTest extends TestLogger {
 						new InputGateDeploymentDescriptor(resultId, 0, icdd);
 
 				final TaskDeploymentDescriptor tdd = new TaskDeploymentDescriptor(
-						appId, jid, vid, eid, "Receiver", 0, 1, 0,
+						jid, vid, eid, "Receiver", 0, 1, 0,
 						new Configuration(), new Configuration(),
 						Tasks.AgnosticReceiver.class.getName(),
 						Collections.<ResultPartitionDeploymentDescriptor>emptyList(),
@@ -1012,7 +1010,7 @@ public class TaskManagerTest extends TestLogger {
 
 						// The task should fail after repeated requests
 						assertEquals(msg.getExecutionState(), ExecutionState.FAILED);
-						
+
 						Throwable error = msg.getError(getClass().getClassLoader());
 						if (error.getClass() != PartitionNotFoundException.class) {
 							error.printStackTrace();
@@ -1044,10 +1042,11 @@ public class TaskManagerTest extends TestLogger {
 	public void testTriggerStackTraceSampleMessage() throws Exception {
 		new JavaTestKit(system) {{
 			ActorGateway taskManagerActorGateway = null;
-			ActorGateway jobManagerActorGateway = TestingUtils.createForwardingJobManager(
-					system,
-					getTestActor(),
-					Option.<String>empty());
+
+			// We need this to be a JM that answers to update messages for
+			// robustness on Travis (if jobs need to be resubmitted in (4)).
+			ActorRef jm = system.actorOf(Props.create(new SimpleLookupJobManagerCreator(null)));
+			ActorGateway jobManagerActorGateway = new AkkaActorGateway(jm, null);
 
 			final ActorGateway testActorGateway = new AkkaActorGateway(
 					getTestActor(),
@@ -1062,21 +1061,8 @@ public class TaskManagerTest extends TestLogger {
 						true,
 						false);
 
-				// Registration
-				new Within(d) {
-					@Override
-					protected void run() {
-						expectMsgClass(RegistrationMessages.RegisterTaskManager.class);
-						assertEquals(taskManager.actor(), getLastSender());
-
-						taskManager.tell(new RegistrationMessages.AcknowledgeRegistration(
-								new InstanceID(), 12345), jobManager);
-					}
-				};
-
 				// Single blocking task
 				final TaskDeploymentDescriptor tdd = new TaskDeploymentDescriptor(
-						new ApplicationID(),
 						new JobID(),
 						new JobVertexID(),
 						new ExecutionAttemptID(),
@@ -1095,9 +1081,15 @@ public class TaskManagerTest extends TestLogger {
 
 				// Submit the task
 				new Within(d) {
+
 					@Override
 					protected void run() {
 						try {
+							// Make sure to register
+							Future<?> connectFuture = taskManager.ask(new TestingTaskManagerMessages
+									.NotifyWhenRegisteredAtJobManager(jobManager.actor()), remaining());
+							Await.ready(connectFuture, remaining());
+
 							Future<Object> taskRunningFuture = taskManager.ask(
 									new TestingTaskManagerMessages.NotifyWhenTaskIsRunning(
 											tdd.getExecutionId()), timeout);
@@ -1223,7 +1215,7 @@ public class TaskManagerTest extends TestLogger {
 				};
 
 				//
-				// 4) Trigger sample for the blocking task with max depth
+				// 3) Trigger sample for the blocking task with max depth
 				//
 				new Within(d) {
 					@Override
@@ -1267,35 +1259,66 @@ public class TaskManagerTest extends TestLogger {
 				};
 
 				//
-				// 5) Trigger sample for the blocking task, but cancel it during sampling
+				// 4) Trigger sample for the blocking task, but cancel it during sampling
 				//
 				new Within(d) {
 					@Override
 					protected void run() {
 						try {
-							// Trigger many samples in order to cancel the task
-							// during a sample
-							taskManager.tell(new TriggerStackTraceSample(
-											0,
-											tdd.getExecutionId(),
-											10000,
-											new FiniteDuration(100, TimeUnit.MILLISECONDS),
-											0),
-									testActorGateway);
+							int maxAttempts = 10;
+							int sleepTime = 100;
+							for (int i = 0; i < maxAttempts; i++, sleepTime *= 2) {
+								// Trigger many samples in order to cancel the task
+								// during a sample
+								taskManager.tell(new TriggerStackTraceSample(
+												44,
+												tdd.getExecutionId(),
+												Integer.MAX_VALUE,
+												new FiniteDuration(10, TimeUnit.MILLISECONDS),
+												0),
+										testActorGateway);
 
-							// Cancel the task
-							taskManager.tell(new CancelTask(tdd.getExecutionId()));
+								Thread.sleep(sleepTime);
 
-							// Receive the expected message (heartbeat races possible)
-							Object[] msg = receiveN(1);
-							while (!(msg[0] instanceof ResponseStackTraceSampleFailure)) {
-								msg = receiveN(1);
+								Future<?> removeFuture = taskManager.ask(
+										new TestingJobManagerMessages.NotifyWhenJobRemoved(tdd.getJobID()),
+										remaining());
+
+								// Cancel the task
+								taskManager.tell(new CancelTask(tdd.getExecutionId()));
+
+								// Receive the expected message (heartbeat races possible)
+								while (true) {
+									Object[] msg = receiveN(1);
+									if (msg[0] instanceof ResponseStackTraceSampleSuccess) {
+										ResponseStackTraceSampleSuccess response = (ResponseStackTraceSampleSuccess) msg[0];
+
+										assertEquals(tdd.getExecutionId(), response.executionId());
+										assertEquals(44, response.sampleId());
+
+										// Done
+										return;
+									} else if (msg[0] instanceof ResponseStackTraceSampleFailure) {
+										// Wait for removal before resubmitting
+										Await.ready(removeFuture, remaining());
+
+										Future<?> taskRunningFuture = taskManager.ask(
+												new TestingTaskManagerMessages.NotifyWhenTaskIsRunning(
+														tdd.getExecutionId()), timeout);
+
+										// Resubmit
+										taskManager.tell(new SubmitTask(tdd));
+
+										Await.ready(taskRunningFuture, remaining());
+
+										// Retry the sample message
+										break;
+									} else {
+										// Different message
+										continue;
+									}
+								}
 							}
-
-							ResponseStackTraceSampleFailure response = (ResponseStackTraceSampleFailure) msg[0];
-
-							assertEquals(tdd.getExecutionId(), response.executionId());
-							assertEquals(IllegalStateException.class, response.cause().getClass());
 						} catch (Exception e) {
 							e.printStackTrace();
 							fail(e.getMessage());

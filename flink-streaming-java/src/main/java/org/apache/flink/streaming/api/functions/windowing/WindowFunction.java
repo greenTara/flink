@@ -31,6 +31,7 @@ import java.io.Serializable;
  * @param <IN> The type of the input value.
  * @param <OUT> The type of the output value.
  * @param <KEY> The type of the key.
+ * @param <W> The type of {@code Window} that this window function can be applied on.
  */
 @Public
 public interface WindowFunction<IN, OUT, KEY, W extends Window> extends Function, Serializable {
@@ -45,5 +46,5 @@ public interface WindowFunction<IN, OUT, KEY, W extends Window> extends Function
 	 * 
 	 * @throws Exception The function may throw exceptions to fail the program and trigger recovery. 
 	 */
-	void apply(KEY key, W window, IN input, Collector<OUT> out) throws Exception;
+	void apply(KEY key, W window, Iterable<IN> input, Collector<OUT> out) throws Exception;
 }

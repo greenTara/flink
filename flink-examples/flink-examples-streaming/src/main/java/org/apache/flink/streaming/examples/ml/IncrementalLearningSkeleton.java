@@ -17,13 +17,15 @@
 
 package org.apache.flink.streaming.examples.ml;
 
+import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.TimestampExtractor;
+import org.apache.flink.streaming.api.functions.AssignerWithPunctuatedWatermarks;
 import org.apache.flink.streaming.api.functions.co.CoMapFunction;
 import org.apache.flink.streaming.api.functions.source.SourceFunction;
 import org.apache.flink.streaming.api.functions.windowing.AllWindowFunction;
+import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
@@ -57,9 +59,9 @@ public class IncrementalLearningSkeleton {
 
 	public static void main(String[] args) throws Exception {
 
-		if (!parseParameters(args)) {
-			return;
-		}
+		// Checking input parameters
+		final ParameterTool params = ParameterTool.fromArgs(args);
+		System.out.println("Usage: IncrementalLearningSkeleton --output <path>");
 
 		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 		env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
@@ -69,7 +71,7 @@ public class IncrementalLearningSkeleton {
 
 		// build new model on every second of new data
 		DataStream<Double[]> model = trainingData
-				.assignTimestamps(new LinearTimestamp())
+				.assignTimestampsAndWatermarks(new LinearTimestamp())
 				.timeWindowAll(Time.of(5000, TimeUnit.MILLISECONDS))
 				.apply(new PartialModelBuilder());
 
@@ -77,9 +79,10 @@ public class IncrementalLearningSkeleton {
 		DataStream<Integer> prediction = newData.connect(model).map(new Predictor());
 
 		// emit result
-		if (fileOutput) {
-			prediction.writeAsText(outputPath);
+		if (params.has("output")) {
+			prediction.writeAsText(params.get("output"));
 		} else {
+			System.out.println("Printing result to stdout. Use --output to specify output path.");
 			prediction.print();
 		}
 
@@ -145,32 +148,26 @@ public class IncrementalLearningSkeleton {
 		}
 	}
 
-	public static class LinearTimestamp implements TimestampExtractor<Integer> {
+	public static class LinearTimestamp implements AssignerWithPunctuatedWatermarks<Integer> {
 		private static final long serialVersionUID = 1L;
 
 		private long counter = 0L;
 
 		@Override
-		public long extractTimestamp(Integer element, long currentTimestamp) {
+		public long extractTimestamp(Integer element, long previousElementTimestamp) {
 			return counter += 10L;
 		}
 
 		@Override
-		public long extractWatermark(Integer element, long currentTimestamp) {
-			return counter - 1;
+		public Watermark checkAndGetNextWatermark(Integer lastElement, long extractedTimestamp) {
+			return new Watermark(counter - 1);
 		}
-
-		@Override
-		public long getCurrentWatermark() {
-			return Long.MIN_VALUE;
-		}
-
 	}
 
 	/**
 	 * Builds up-to-date partial models on new training data.
 	 */
-	public static class PartialModelBuilder implements AllWindowFunction<Iterable<Integer>, Double[], TimeWindow> {
+	public static class PartialModelBuilder implements AllWindowFunction<Integer, Double[], TimeWindow> {
 		private static final long serialVersionUID = 1L;
 
 		protected Double[] buildPartialModel(Iterable<Integer> values) {
@@ -221,32 +218,6 @@ public class IncrementalLearningSkeleton {
 			return 0;
 		}
 
-	}
-
-	// *************************************************************************
-	// UTIL METHODS
-	// *************************************************************************
-
-	private static boolean fileOutput = false;
-	private static String outputPath;
-
-	private static boolean parseParameters(String[] args) {
-
-		if (args.length > 0) {
-			// parse input arguments
-			fileOutput = true;
-			if (args.length == 1) {
-				outputPath = args[0];
-			} else {
-				System.err.println("Usage: IncrementalLearningSkeleton <result path>");
-				return false;
-			}
-		} else {
-			System.out.println("Executing IncrementalLearningSkeleton with generated data.");
-			System.out.println("  Provide parameter to write to file.");
-			System.out.println("  Usage: IncrementalLearningSkeleton <result path>");
-		}
-		return true;
 	}
 
 }

@@ -26,9 +26,7 @@ import org.apache.flink.api.common.functions.ReduceFunction;
 import org.apache.flink.api.common.functions.RichFunction;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.Utils;
-import org.apache.flink.api.java.typeutils.GenericTypeInfo;
 import org.apache.flink.api.java.typeutils.TypeExtractor;
-import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.aggregation.AggregationFunction;
 import org.apache.flink.streaming.api.functions.aggregation.ComparableAggregator;
@@ -45,8 +43,9 @@ import org.apache.flink.streaming.api.windowing.triggers.Trigger;
 import org.apache.flink.streaming.api.windowing.windows.Window;
 import org.apache.flink.streaming.runtime.operators.windowing.EvictingNonKeyedWindowOperator;
 import org.apache.flink.streaming.runtime.operators.windowing.NonKeyedWindowOperator;
-import org.apache.flink.streaming.runtime.operators.windowing.buffers.HeapWindowBuffer;
-import org.apache.flink.streaming.runtime.operators.windowing.buffers.PreAggregatingHeapWindowBuffer;
+import org.apache.flink.streaming.runtime.operators.windowing.buffers.FoldingWindowBuffer;
+import org.apache.flink.streaming.runtime.operators.windowing.buffers.ListWindowBuffer;
+import org.apache.flink.streaming.runtime.operators.windowing.buffers.ReducingWindowBuffer;
 
 /**
  * A {@code AllWindowedStream} represents a data stream where the stream of
@@ -156,22 +155,20 @@ public class AllWindowedStream<T, W extends Window> {
 
 		OneInputStreamOperator<T, T> operator;
 
-		boolean setProcessingTime = input.getExecutionEnvironment().getStreamTimeCharacteristic() == TimeCharacteristic.ProcessingTime;
-
 		if (evictor != null) {
 			operator = new EvictingNonKeyedWindowOperator<>(windowAssigner,
 					windowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
-					new HeapWindowBuffer.Factory<T>(),
+					new ListWindowBuffer.Factory<>(getInputType().createSerializer(getExecutionEnvironment().getConfig())),
 					new ReduceIterableAllWindowFunction<W, T>(function),
 					trigger,
-					evictor).enableSetProcessingTime(setProcessingTime);
+					evictor);
 
 		} else {
 			operator = new NonKeyedWindowOperator<>(windowAssigner,
 					windowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
-					new PreAggregatingHeapWindowBuffer.Factory<>(function),
+					new ReducingWindowBuffer.Factory<>(function, getInputType().createSerializer(getExecutionEnvironment().getConfig())),
 					new ReduceIterableAllWindowFunction<W, T>(function),
-					trigger).enableSetProcessingTime(setProcessingTime);
+					trigger);
 		}
 
 		return input.transform(opName, input.getType(), operator).setParallelism(1);
@@ -225,11 +222,10 @@ public class AllWindowedStream<T, W extends Window> {
 	 * @param function The window function.
 	 * @return The data stream that is the result of applying the window function to the window.
 	 */
-	public <R> SingleOutputStreamOperator<R, ?> apply(AllWindowFunction<Iterable<T>, R, W> function) {
+	public <R> SingleOutputStreamOperator<R, ?> apply(AllWindowFunction<T, R, W> function) {
 		@SuppressWarnings("unchecked, rawtypes")
-		TypeInformation<Iterable<T>> iterTypeInfo = new GenericTypeInfo<>((Class) Iterable.class);
 		TypeInformation<R> resultType = TypeExtractor.getUnaryOperatorReturnType(
-				function, AllWindowFunction.class, true, true, iterTypeInfo, null, false);
+				function, AllWindowFunction.class, true, true, getInputType(), null, false);
 
 		return apply(function, resultType);
 	}
@@ -245,7 +241,7 @@ public class AllWindowedStream<T, W extends Window> {
 	 * @param function The window function.
 	 * @return The data stream that is the result of applying the window function to the window.
 	 */
-	public <R> SingleOutputStreamOperator<R, ?> apply(AllWindowFunction<Iterable<T>, R, W> function, TypeInformation<R> resultType) {
+	public <R> SingleOutputStreamOperator<R, ?> apply(AllWindowFunction<T, R, W> function, TypeInformation<R> resultType) {
 		//clean the closure
 		function = input.getExecutionEnvironment().clean(function);
 
@@ -260,24 +256,22 @@ public class AllWindowedStream<T, W extends Window> {
 
 		String opName = "TriggerWindow(" + windowAssigner + ", " + trigger + ", " + udfName + ")";
 
-		NonKeyedWindowOperator<T, R, W> operator;
-
-		boolean setProcessingTime = input.getExecutionEnvironment().getStreamTimeCharacteristic() == TimeCharacteristic.ProcessingTime;
+		NonKeyedWindowOperator<T, T, R, W> operator;
 
 		if (evictor != null) {
 			operator = new EvictingNonKeyedWindowOperator<>(windowAssigner,
 					windowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
-					new HeapWindowBuffer.Factory<T>(),
+					new ListWindowBuffer.Factory<>(getInputType().createSerializer(getExecutionEnvironment().getConfig())),
 					function,
 					trigger,
-					evictor).enableSetProcessingTime(setProcessingTime);
+					evictor);
 
 		} else {
 			operator = new NonKeyedWindowOperator<>(windowAssigner,
 					windowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
-					new HeapWindowBuffer.Factory<T>(),
+					new ListWindowBuffer.Factory<>(getInputType().createSerializer(getExecutionEnvironment().getConfig())),
 					function,
-					trigger).enableSetProcessingTime(setProcessingTime);
+					trigger);
 		}
 
 		return input.transform(opName, resultType, operator).setParallelism(1);
@@ -333,22 +327,20 @@ public class AllWindowedStream<T, W extends Window> {
 
 		OneInputStreamOperator<T, R> operator;
 
-		boolean setProcessingTime = input.getExecutionEnvironment().getStreamTimeCharacteristic() == TimeCharacteristic.ProcessingTime;
-
 		if (evictor != null) {
 			operator = new EvictingNonKeyedWindowOperator<>(windowAssigner,
 					windowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
-					new HeapWindowBuffer.Factory<T>(),
+					new ListWindowBuffer.Factory<>(getInputType().createSerializer(getExecutionEnvironment().getConfig())),
 					new ReduceApplyAllWindowFunction<>(preAggregator, function),
 					trigger,
-					evictor).enableSetProcessingTime(setProcessingTime);
+					evictor);
 
 		} else {
 			operator = new NonKeyedWindowOperator<>(windowAssigner,
 				windowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
-				new PreAggregatingHeapWindowBuffer.Factory<>(preAggregator),
-				new ReduceApplyAllWindowFunction<>(preAggregator, function),
-				trigger).enableSetProcessingTime(setProcessingTime);
+				new ReducingWindowBuffer.Factory<>(preAggregator, getInputType().createSerializer(getExecutionEnvironment().getConfig())),
+				function,
+				trigger);
 		}
 
 		return input.transform(opName, resultType, operator).setParallelism(1);
@@ -404,26 +396,24 @@ public class AllWindowedStream<T, W extends Window> {
 
 		OneInputStreamOperator<T, R> operator;
 
-		boolean setProcessingTime = input.getExecutionEnvironment().getStreamTimeCharacteristic() == TimeCharacteristic.ProcessingTime;
-
 		if (evictor != null) {
 			opName = "NonParallelTriggerWindow(" + windowAssigner  + ", " + trigger + ", " + evictor + ", " + udfName + ")";
 
 			operator = new EvictingNonKeyedWindowOperator<>(windowAssigner,
 				windowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
-				new HeapWindowBuffer.Factory<T>(),
+				new ListWindowBuffer.Factory<>(getInputType().createSerializer(getExecutionEnvironment().getConfig())),
 				new FoldApplyAllWindowFunction<>(initialValue, foldFunction, function),
 				trigger,
-				evictor).enableSetProcessingTime(setProcessingTime);
+				evictor);
 
 		} else {
 			opName = "NonParallelTriggerWindow(" + windowAssigner  + ", " + trigger + ", " + udfName + ")";
 
 			operator = new NonKeyedWindowOperator<>(windowAssigner,
 				windowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
-				new HeapWindowBuffer.Factory<T>(),
-				new FoldApplyAllWindowFunction<>(initialValue, foldFunction, function),
-				trigger).enableSetProcessingTime(setProcessingTime);
+				new FoldingWindowBuffer.Factory<>(foldFunction, initialValue, resultType.createSerializer(getExecutionEnvironment().getConfig())),
+				function,
+				trigger);
 		}
 
 		return input.transform(opName, resultType, operator).setParallelism(1);

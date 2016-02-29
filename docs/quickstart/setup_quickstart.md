@@ -87,11 +87,18 @@ Run the __Word Count example__ to see Flink at work.
 * __Start the example program__:
 
   ~~~bash
-  $ bin/flink run ./examples/WordCount.jar file://`pwd`/hamlet.txt file://`pwd`/wordcount-result.txt
+  $ bin/flink run ./examples/batch/WordCount.jar --input file://`pwd`/hamlet.txt --output file://`pwd`/wordcount-result.txt
   ~~~
 
 * You will find a file called __wordcount-result.txt__ in your current directory.
 
+## Stop
+
+To stop Flink when you're done, you just have to type:
+
+~~~bash
+$ bin/stop-local.sh
+~~~
 
 ## Cluster Setup
 
